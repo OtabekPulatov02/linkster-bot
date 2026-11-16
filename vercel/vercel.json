@@ -1,7 +1,6 @@
 {
   "functions": {
-    "api/worker.py": { "maxDuration": 300, "memory": 2048 },
-    "api/webhook.py": { "maxDuration": 30 }
-  },
-  "excludeFiles": "{.git/**,**/__pycache__/**}"
+    "api/worker.py": { "maxDuration": 300, "memory": 2048, "includeFiles": "{bin/**,core.py}" },
+    "api/webhook.py": { "maxDuration": 30, "includeFiles": "core.py" }
+  }
 }
