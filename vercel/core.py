@@ -38,6 +38,7 @@ T = {
         "blocked": "🚧 Сервис блокирует загрузку с сервера. Попробуй через несколько минут.",
         "timeout": "⏱ Не успел обработать за отведённое время. Попробуй MP3 или более короткое видео.",
         "fail": "❌ Не получилось скачать. Проверь ссылку и попробуй ещё раз.",
+        "credit": "Скачано с помощью @linkster_bot",
     },
     "uz": {
         "start": ("👋 <b>Salom!</b>\n\n<b>YouTube</b> yoki <b>Instagram</b> (Reels, post, Shorts) havolasini yuboring — "
@@ -58,6 +59,7 @@ T = {
         "blocked": "🚧 Xizmat serverdan yuklashni bloklamoqda. Bir necha daqiqadan so'ng urinib ko'ring.",
         "timeout": "⏱ Ajratilgan vaqtda ulgurmadim. MP3 yoki qisqaroq videoni sinab ko'ring.",
         "fail": "❌ Yuklab bo'lmadi. Havolani tekshirib, qayta urinib ko'ring.",
+        "credit": "@linkster_bot yordamida yuklab olindi",
     },
 }
 
@@ -291,14 +293,15 @@ def run_job(chat_id, msg_id, url, fmt, lang):
                     raise JobError("too_big")
                 h = lower[0]
         status("upload")
+        cap = f"{title[:200]}\n\n{tx['credit']}"
         if fmt == "mp3":
-            r = tg_upload("sendAudio", "audio", path, chat_id=chat_id, title=title,
+            r = tg_upload("sendAudio", "audio", path, chat_id=chat_id, title=title, caption=cap,
                           performer=(info.get("uploader") or "")[:64], duration=dur)
         else:
-            r = tg_upload("sendVideo", "video", path, chat_id=chat_id, caption=title[:200], supports_streaming="true",
+            r = tg_upload("sendVideo", "video", path, chat_id=chat_id, caption=cap, supports_streaming="true",
                           duration=dur, width=info.get("width") or "", height=info.get("height") or "")
             if not r.get("ok"):
-                r = tg_upload("sendDocument", "document", path, chat_id=chat_id, caption=title[:200])
+                r = tg_upload("sendDocument", "document", path, chat_id=chat_id, caption=cap)
         if not r.get("ok"):
             raise JobError("fail")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
