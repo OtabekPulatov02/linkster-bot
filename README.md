@@ -1,3 +1,13 @@
+---
+title: Linkster Bot
+emoji: 🎬
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Linkster bot
 
 Telegram bot: send a YouTube or Instagram link, get an MP4 or MP3 back.

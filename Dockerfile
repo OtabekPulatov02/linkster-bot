@@ -6,8 +6,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY bot.py entrypoint.sh ./
-RUN chmod +x entrypoint.sh && useradd -m bot && mkdir -p /data && chown bot /data
+RUN chmod +x entrypoint.sh && useradd -m -u 1000 bot && mkdir -p /data && chown bot /data
 USER bot
-ENV WORKDIR=/data
-EXPOSE 10000
+ENV WORKDIR=/data PORT=7860
+EXPOSE 7860
 CMD ["./entrypoint.sh"]
