@@ -102,10 +102,21 @@ def tg(method, **data):
         return {"ok": False, "description": str(e)}
 
 
-def tg_upload(method, field, path: Path, **data):
-    with open(path, "rb") as f:
-        r = requests.post(f"{API}/{method}", data=data, files={field: (path.name, f)}, timeout=200)
-    return r.json()
+def tg_upload(method, field, path: Path, timeout=200, **data):
+    """Upload a file. A 5xx or a timeout does NOT mean failure: Telegram often finishes
+    processing a big file after its gateway gave up, so such results are marked uncertain."""
+    try:
+        with open(path, "rb") as f:
+            r = requests.post(f"{API}/{method}", data=data, files={field: (path.name, f)}, timeout=timeout)
+        try:
+            j = r.json()
+        except ValueError:
+            j = {"ok": False, "error_code": r.status_code, "description": r.text[:200]}
+    except requests.RequestException as e:
+        return {"ok": False, "uncertain": True, "description": repr(e)[:200]}
+    if not j.get("ok") and (j.get("error_code") or 0) >= 500:
+        j["uncertain"] = True
+    return j
 
 
 def kick_worker(payload: dict):
@@ -305,9 +316,9 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
     def status(key, **kw):
         tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=tx[key].format(**kw) if kw else tx[key])
 
-    def ok_log(nbytes):
+    def ok_log(nbytes, detail=None):
         log("job_ok", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
-            ms=int((time.time() - t0) * 1000), bytes=nbytes)
+            ms=int((time.time() - t0) * 1000), bytes=nbytes, detail=detail)
 
     def fail_log(err, detail=None):
         trace(f"[job] fail err={err} url={url} detail={(detail or '')[:600]}")
@@ -348,14 +359,21 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
                 h = lower[0]
         status("upload")
         cap = f"{title[:200]}\n\n{tx['credit']}"
+        left = max(30, DEADLINE + 25 - (time.time() - t0))   # never outlive the function
         if fmt == "mp3":
-            r = tg_upload("sendAudio", "audio", path, chat_id=chat_id, title=title, caption=cap,
+            r = tg_upload("sendAudio", "audio", path, timeout=left, chat_id=chat_id, title=title, caption=cap,
                           performer=(info.get("uploader") or "")[:64], duration=dur)
         else:
-            r = tg_upload("sendVideo", "video", path, chat_id=chat_id, caption=cap, supports_streaming="true",
+            r = tg_upload("sendVideo", "video", path, timeout=left, chat_id=chat_id, caption=cap, supports_streaming="true",
                           duration=dur, width=info.get("width") or "", height=info.get("height") or "")
-            if not r.get("ok"):
-                r = tg_upload("sendDocument", "document", path, chat_id=chat_id, caption=cap)
+            if not r.get("ok") and not r.get("uncertain"):   # a real rejection: retry as a plain file
+                left = max(30, DEADLINE + 25 - (time.time() - t0))
+                r = tg_upload("sendDocument", "document", path, timeout=left, chat_id=chat_id, caption=cap)
+        if r.get("uncertain"):
+            # Telegram's gateway timed out but the file usually still arrives: no error, no second copy.
+            tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
+            ok_log(path.stat().st_size, detail=f"upload uncertain, assumed delivered: {r.get('description', '')}"[:300])
+            return
         if not r.get("ok"):
             raise JobError("fail", detail=f"telegram upload: {str(r)[:300]}")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
