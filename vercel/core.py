@@ -1,4 +1,5 @@
 """Linkster serverless core: Telegram helpers + yt-dlp download with fallbacks. No state is kept."""
+import sys
 import base64, hashlib, http.client, json, os, re, shutil, stat, subprocess, tempfile, time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -208,31 +209,37 @@ def ydl_opts(outdir: Path, client=None, extra=None):
 
 
 class JobError(Exception):
-    def __init__(self, key, **kw):
-        self.key, self.kw = key, kw
+    def __init__(self, key, detail=None, **kw):
+        self.key, self.kw, self.detail = key, kw, detail
+
+
+def trace(*a):
+    """Diagnostics to stderr, flushed, so they reach the Vercel runtime logs."""
+    print(*a, file=sys.stderr, flush=True)
 
 
 def with_ladder(fn, kind, t0, notify):
     """Run fn(client) across client variants; first success wins. Returns (result, last_error_key)."""
     ladder = CLIENT_LADDER if kind == "yt" else [None]
-    last = None
+    last, errs = None, []
     for i, c in enumerate(ladder):
         if time.time() - t0 > DEADLINE - 40:
-            raise JobError("timeout")
+            raise JobError("timeout", detail=" | ".join(errs) or None)
         try:
             return fn(c)
         except JobError:
             raise
         except Exception as e:
             last = classify_error(str(e))
-            print(f'[ladder] client={c} err={str(e)[:300]}')
+            errs.append(f"{c or 'default'}: {str(e)[:220]}")
+            trace(f'[ladder] client={c} err={str(e)[:300]}')
             if "live" in str(e).lower() and "is live" in str(e).lower():
-                raise JobError("live")
+                raise JobError("live", detail=errs[-1])
             if last == "private" and i >= 1:  # confirmed by 2 clients
-                raise JobError("private")
+                raise JobError("private", detail=" | ".join(errs))
             if i == 0:
                 notify("retry")
-    raise JobError(last or "fail")
+    raise JobError(last or "fail", detail=" | ".join(errs))
 
 
 def probe(url, outdir, client):
@@ -302,9 +309,10 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
         log("job_ok", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
             ms=int((time.time() - t0) * 1000), bytes=nbytes)
 
-    def fail_log(err):
+    def fail_log(err, detail=None):
+        trace(f"[job] fail err={err} url={url} detail={(detail or '')[:600]}")
         log("job_fail", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
-            ms=int((time.time() - t0) * 1000), err=err)
+            ms=int((time.time() - t0) * 1000), err=err, detail=detail)
 
     work = Path(tempfile.mkdtemp(dir=TMP))
     try:
@@ -349,16 +357,15 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
             if not r.get("ok"):
                 r = tg_upload("sendDocument", "document", path, chat_id=chat_id, caption=cap)
         if not r.get("ok"):
-            raise JobError("fail")
+            raise JobError("fail", detail=f"telegram upload: {str(r)[:300]}")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
         ok_log(path.stat().st_size)
     except JobError as e:
         status(e.key, **e.kw)
-        fail_log(e.key)
+        fail_log(e.key, e.detail)
     except Exception as e:  # noqa
         k = classify_error(str(e))
-        print("[job] unexpected", repr(e)[:300])
         status(k)
-        fail_log(k)
+        fail_log(k, f"unexpected: {repr(e)[:500]}")
     finally:
         shutil.rmtree(work, ignore_errors=True)  # nothing is kept on our side

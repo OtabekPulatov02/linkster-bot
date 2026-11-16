@@ -160,7 +160,7 @@ function render(s){
   $('b-top').innerHTML=s.top_users.length?s.top_users.map((u,i)=>`<div class="bar"><div><span>${i+1}. ${who(u)}</span><span>${N(u.n)}</span></div></div>`).join(''):'<div class="empty">Пока нет данных</div>';
   $('t-avg').textContent='среднее время: '+(t.avg_ms/1000).toFixed(1)+' с';
   $('rec').innerHTML=s.recent.length?s.recent.map(r=>{const d=new Date(r.ts);
-    return `<tr><td>${d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td><td><span class="tag ${r.kind==='job_ok'?'ok':'bad'}">${r.kind==='job_ok'?'ок':(ERR[r.err]||'ошибка')}</span></td><td>${PL[r.platform]||'—'}</td><td>${(r.fmt||'—').toUpperCase()}</td><td>${SRC[r.source]||'—'}</td><td>${r.ms?(r.ms/1000).toFixed(1)+' с':'—'}</td><td>${r.bytes?MB(r.bytes):'—'}</td><td>${who(r)}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Пока нет загрузок</td></tr>';
+    return `<tr><td>${d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td><td><span class="tag ${r.kind==='job_ok'?'ok':'bad'}"${r.detail?` title="${esc(r.detail)}"`:''}>${r.kind==='job_ok'?'ок':(ERR[r.err]||'ошибка')}</span></td><td>${PL[r.platform]||'—'}</td><td>${(r.fmt||'—').toUpperCase()}</td><td>${SRC[r.source]||'—'}</td><td>${r.ms?(r.ms/1000).toFixed(1)+' с':'—'}</td><td>${r.bytes?MB(r.bytes):'—'}</td><td>${who(r)}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Пока нет загрузок</td></tr>';
   $('upd').textContent='обновлено '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
 }
 async function load(){
