@@ -365,7 +365,23 @@ async def on_download(cq: CallbackQuery, bot: Bot):
     asyncio.create_task(run_job(bot, cq, item[1], fmt))
 
 
+async def health_server():
+    """Tiny HTTP endpoint for free hosts that require an open port and for uptime pings (keeps the service awake)."""
+    from aiohttp import web
+    port = int(os.getenv("PORT", "0") or 0)
+    if not port:
+        return
+    app = web.Application()
+    app.router.add_get("/", lambda r: web.Response(text="ok"))
+    app.router.add_get("/health", lambda r: web.Response(text="ok"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    log.info("health endpoint on :%s", port)
+
+
 async def main():
+    await health_server()
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await bot.delete_webhook(drop_pending_updates=True)
     me = await bot.get_me()

@@ -9,4 +9,5 @@ COPY bot.py entrypoint.sh ./
 RUN chmod +x entrypoint.sh && useradd -m bot && mkdir -p /data && chown bot /data
 USER bot
 ENV WORKDIR=/data
+EXPOSE 10000
 CMD ["./entrypoint.sh"]
