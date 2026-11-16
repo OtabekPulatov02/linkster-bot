@@ -1,0 +1,309 @@
+"""Linkster serverless core: Telegram helpers + yt-dlp download with fallbacks. No state is kept."""
+import base64, hashlib, http.client, json, os, re, shutil, stat, subprocess, tempfile, time
+from pathlib import Path
+from urllib.parse import urlparse
+
+import requests
+
+TOKEN = os.environ["BOT_TOKEN"]
+SECRET = hashlib.sha256(("linkster:" + TOKEN).encode()).hexdigest()[:40]  # webhook + worker auth
+API = f"https://api.telegram.org/bot{TOKEN}"
+MAX_BYTES = 49 * 1024 * 1024
+MAX_DURATION = 60 * 60
+DEADLINE = 270  # seconds, Vercel limit is 300
+HERE = Path(__file__).parent
+TMP = Path(tempfile.gettempdir())
+
+URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+ALLOWED = {"youtube.com": "yt", "m.youtube.com": "yt", "music.youtube.com": "yt", "youtu.be": "yt",
+           "youtube-nocookie.com": "yt", "instagram.com": "ig", "instagr.am": "ig"}
+
+T = {
+    "ru": {
+        "start": ("👋 <b>Привет!</b>\n\nПришли ссылку на видео из <b>YouTube</b> или <b>Instagram</b> "
+                  "(Reels, посты, Shorts), и я пришлю файл в <b>MP4</b> или <b>MP3</b>.\n\n"
+                  "Лимит Telegram для ботов — 50 МБ: длинные видео сжимаются по качеству.\n"
+                  "Я ничего не храню у себя: файл остаётся только в этом чате — перешли его куда нужно."),
+        "choose": "Что скачать?", "mp4": "🎬 MP4 (видео)", "mp3": "🎵 MP3 (звук)",
+        "no_url": "🔗 Пришли ссылку на YouTube или Instagram.",
+        "bad_host": "😕 Поддерживаются только ссылки YouTube и Instagram.",
+        "expired": "⌛ Ссылка не найдена, отправь её ещё раз.",
+        "queue": "⏳ В очереди…", "checking": "🔎 Проверяю ссылку…", "download": "⬇️ Скачиваю…",
+        "retry": "🔁 Пробую другой способ…", "upload": "📤 Отправляю…",
+        "too_long": "⛔ Видео длиннее {m} мин — слишком большое для бота. Попробуй MP3.",
+        "too_big": "⛔ Не уложился в лимит 50 МБ даже в минимальном качестве. Попробуй MP3.",
+        "live": "⛔ Прямые эфиры не поддерживаются.",
+        "private": "🔒 Видео недоступно: приватное, удалено, с возрастным ограничением или закрыто для региона.",
+        "login": "🔐 Сервис просит вход для этого видео. Попробуй позже или другую ссылку.",
+        "blocked": "🚧 Сервис блокирует загрузку с сервера. Попробуй через несколько минут.",
+        "timeout": "⏱ Не успел обработать за отведённое время. Попробуй MP3 или более короткое видео.",
+        "fail": "❌ Не получилось скачать. Проверь ссылку и попробуй ещё раз.",
+    },
+    "uz": {
+        "start": ("👋 <b>Salom!</b>\n\n<b>YouTube</b> yoki <b>Instagram</b> (Reels, post, Shorts) havolasini yuboring — "
+                  "men uni <b>MP4</b> yoki <b>MP3</b> qilib yuboraman.\n\n"
+                  "Telegram botlar uchun limit — 50 MB: uzun videolar sifati pasaytiriladi.\n"
+                  "Men hech narsa saqlamayman: fayl faqat shu chatda qoladi — kerakli joyga yuboring."),
+        "choose": "Nimani yuklab olay?", "mp4": "🎬 MP4 (video)", "mp3": "🎵 MP3 (ovoz)",
+        "no_url": "🔗 YouTube yoki Instagram havolasini yuboring.",
+        "bad_host": "😕 Faqat YouTube va Instagram havolalari qo'llab-quvvatlanadi.",
+        "expired": "⌛ Havola topilmadi, qayta yuboring.",
+        "queue": "⏳ Navbatda…", "checking": "🔎 Havola tekshirilmoqda…", "download": "⬇️ Yuklanmoqda…",
+        "retry": "🔁 Boshqa usulni sinayapman…", "upload": "📤 Yuborilmoqda…",
+        "too_long": "⛔ Video {m} daqiqadan uzun. MP3 ni sinab ko'ring.",
+        "too_big": "⛔ Eng past sifatda ham 50 MB ga sig'maydi. MP3 ni sinab ko'ring.",
+        "live": "⛔ Jonli efirlar qo'llab-quvvatlanmaydi.",
+        "private": "🔒 Video mavjud emas: yopiq, o'chirilgan, yosh cheklovi yoki hudud bo'yicha yopiq.",
+        "login": "🔐 Bu video uchun kirish talab qilinmoqda. Keyinroq urinib ko'ring.",
+        "blocked": "🚧 Xizmat serverdan yuklashni bloklamoqda. Bir necha daqiqadan so'ng urinib ko'ring.",
+        "timeout": "⏱ Ajratilgan vaqtda ulgurmadim. MP3 yoki qisqaroq videoni sinab ko'ring.",
+        "fail": "❌ Yuklab bo'lmadi. Havolani tekshirib, qayta urinib ko'ring.",
+    },
+}
+
+
+def lang_of(user: dict) -> str:
+    return "uz" if (user.get("language_code") or "").startswith("uz") else "ru"
+
+
+def clean_url(text):
+    m = URL_RE.search(text or "")
+    if not m:
+        return None, "no_url"
+    url = m.group(0).rstrip(".,);]»")
+    host = (urlparse(url).hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    kind = ALLOWED.get(host)
+    return (url, kind) if kind else (None, "bad_host")
+
+
+def classify_error(err: str) -> str:
+    e = err.lower()
+    if any(s in e for s in ("login required", "log in", "sign in", "cookies", "rate-limit", "rate limit",
+                            "empty media response", "confirm you")):
+        return "login"
+    if any(s in e for s in ("private", "unavailable", "removed", "not available", "geo", "country",
+                            "members-only", "does not exist", "no video", "age")):
+        return "private"
+    if any(s in e for s in ("403", "429", "too many requests", "bot")):
+        return "blocked"
+    return "fail"
+
+
+# ---------- Telegram ----------
+def tg(method, **data):
+    try:
+        r = requests.post(f"{API}/{method}", json=data, timeout=20)
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "description": str(e)}
+
+
+def tg_upload(method, field, path: Path, **data):
+    with open(path, "rb") as f:
+        r = requests.post(f"{API}/{method}", data=data, files={field: (path.name, f)}, timeout=200)
+    return r.json()
+
+
+def kick_worker(payload: dict):
+    """Fire-and-forget POST to /api/worker (must outlive this request)."""
+    host = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ["VERCEL_URL"]
+    body = json.dumps({**payload, "secret": SECRET})
+    c = http.client.HTTPSConnection(host, timeout=8)
+    c.request("POST", "/api/worker", body, {"Content-Type": "application/json"})
+    try:
+        c.sock.settimeout(1.5)
+        c.getresponse()
+    except Exception:
+        pass
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
+# ---------- tools ----------
+def _exe(src: Path, name: str) -> str:
+    dst = TMP / name
+    if not dst.exists():
+        shutil.copy(src, dst)
+        dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(dst)
+
+
+def tools():
+    import imageio_ffmpeg
+    ff = _exe(Path(imageio_ffmpeg.get_ffmpeg_exe()), "ffmpeg")
+    qjs = _exe(HERE / "bin" / "qjs", "qjs")
+    return ff, qjs
+
+
+def cookies_file():
+    if os.environ.get("COOKIES_B64"):
+        p = TMP / "cookies.txt"
+        p.write_bytes(base64.b64decode(os.environ["COOKIES_B64"]))
+        return str(p)
+    return None
+
+
+CLIENT_LADDER = [None, ["tv"], ["web_safari"], ["mweb"], ["android_vr"], ["ios"], ["web_embedded"]]
+
+
+def ydl_opts(outdir: Path, client=None, extra=None):
+    ff, qjs = tools()
+    o = {"outtmpl": str(outdir / "%(id)s.%(ext)s"), "noplaylist": True, "quiet": True, "no_warnings": True, "noprogress": True,
+         "restrictfilenames": True, "retries": 3, "fragment_retries": 3, "socket_timeout": 25,
+         "concurrent_fragment_downloads": 6, "ffmpeg_location": str(TMP),
+         "js_runtimes": {"quickjs": {"path": qjs}}, "max_filesize": 400 * 1024 * 1024}
+    if client:
+        o["extractor_args"] = {"youtube": {"player_client": client}}
+    if os.environ.get("PROXY_URL"):
+        o["proxy"] = os.environ["PROXY_URL"]
+    ck = cookies_file()
+    if ck:
+        o["cookiefile"] = ck
+    o.update(extra or {})
+    return o
+
+
+class JobError(Exception):
+    def __init__(self, key, **kw):
+        self.key, self.kw = key, kw
+
+
+def with_ladder(fn, kind, t0, notify):
+    """Run fn(client) across client variants; first success wins. Returns (result, last_error_key)."""
+    ladder = CLIENT_LADDER if kind == "yt" else [None]
+    last = None
+    for i, c in enumerate(ladder):
+        if time.time() - t0 > DEADLINE - 40:
+            raise JobError("timeout")
+        try:
+            return fn(c)
+        except JobError:
+            raise
+        except Exception as e:
+            last = classify_error(str(e))
+            if "live" in str(e).lower() and "is live" in str(e).lower():
+                raise JobError("live")
+            if last == "private" and i >= 1:  # confirmed by 2 clients
+                raise JobError("private")
+            if i == 0:
+                notify("retry")
+    raise JobError(last or "fail")
+
+
+def probe(url, outdir, client):
+    import yt_dlp
+    with yt_dlp.YoutubeDL({**ydl_opts(outdir, client), "skip_download": True}) as y:
+        info = y.extract_info(url, download=False)
+    if info.get("_type") == "playlist" and info.get("entries"):
+        info = next(e for e in info["entries"] if e)
+    return info
+
+
+def pick_height(info, cap=MAX_BYTES):
+    dur = info.get("duration") or 0
+    fm = info.get("formats") or []
+    ab = max([f.get("abr") or f.get("tbr") or 0 for f in fm if f.get("vcodec") == "none"] or [128])
+    for h in (1080, 720, 480, 360, 240, 144):
+        vs = [f for f in fm if f.get("vcodec") not in (None, "none") and (f.get("height") or 0) <= h]
+        if not vs:
+            continue
+        v = max(vs, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))
+        size = v.get("filesize") or v.get("filesize_approx")
+        if not size and v.get("tbr") and dur:
+            size = (v["tbr"] + ab) * 1000 / 8 * dur
+        elif size and v.get("acodec") in (None, "none"):
+            size += ab * 1000 / 8 * dur
+        if size is None or size <= cap * 0.95:
+            return h
+    return 720 if not fm or not any(f.get('height') for f in fm) else 144
+
+
+def download_video(url, outdir, client, height):
+    import yt_dlp
+    fmt = (f"bv*[height<={height}][ext=mp4]+ba[ext=m4a]/bv*[height<={height}]+ba/"
+           f"b[height<={height}][ext=mp4]/b[height<={height}]/b")
+    o = ydl_opts(outdir, client, {"format": fmt, "merge_output_format": "mp4"})
+    with yt_dlp.YoutubeDL(o) as y:
+        y.extract_info(url, download=True)
+    files = [f for f in outdir.iterdir() if f.suffix in (".mp4", ".mkv", ".webm")]
+    if not files:
+        raise JobError("fail")
+    return max(files, key=lambda f: f.stat().st_size)
+
+
+def download_audio(url, outdir, client, kbps):
+    import yt_dlp
+    o = ydl_opts(outdir, client, {"format": "bestaudio/best"})
+    with yt_dlp.YoutubeDL(o) as y:
+        y.extract_info(url, download=True)
+    src = max(outdir.iterdir(), key=lambda f: f.stat().st_size)
+    out = outdir / "audio.mp3"
+    r = subprocess.run([str(TMP / "ffmpeg"), "-y", "-i", str(src), "-vn", "-codec:a", "libmp3lame",
+                        "-b:a", f"{kbps}k", str(out)], capture_output=True, timeout=200)
+    if r.returncode != 0 or not out.exists():
+        raise JobError("fail")
+    return out
+
+
+def run_job(chat_id, msg_id, url, fmt, lang):
+    t0 = time.time()
+    tx = T[lang]
+    kind = clean_url(url)[1]
+
+    def status(key, **kw):
+        tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=tx[key].format(**kw) if kw else tx[key])
+
+    work = Path(tempfile.mkdtemp(dir=TMP))
+    try:
+        tools()
+        status("checking")
+        info = with_ladder(lambda c: probe(url, work, c), kind, t0, lambda k: status("retry"))
+        if info.get("is_live"):
+            raise JobError("live")
+        dur = int(info.get("duration") or 0)
+        if dur > MAX_DURATION and fmt == "mp4":
+            raise JobError("too_long", m=MAX_DURATION // 60)
+        title = (info.get("title") or "video")[:100]
+        status("download")
+        if fmt == "mp3":
+            kbps = 192 if dur <= 1800 else 128 if dur <= 3000 else 96
+            if dur and kbps * 1000 / 8 * dur > MAX_BYTES:
+                kbps = 64
+            path = with_ladder(lambda c: download_audio(url, work, c, kbps), kind, t0, lambda k: status("retry"))
+            if path.stat().st_size > MAX_BYTES:
+                raise JobError("too_big")
+        else:
+            h = pick_height(info)
+            while True:
+                path = with_ladder(lambda c: download_video(url, work, c, h), kind, t0, lambda k: status("retry"))
+                if path.stat().st_size <= MAX_BYTES:
+                    break
+                for f in work.iterdir():
+                    if f.suffix in (".mp4", ".mkv", ".webm"):
+                        f.unlink()
+                lower = [x for x in (720, 480, 360, 240, 144) if x < h]
+                if not lower:
+                    raise JobError("too_big")
+                h = lower[0]
+        status("upload")
+        if fmt == "mp3":
+            r = tg_upload("sendAudio", "audio", path, chat_id=chat_id, title=title,
+                          performer=(info.get("uploader") or "")[:64], duration=dur)
+        else:
+            r = tg_upload("sendVideo", "video", path, chat_id=chat_id, caption=title[:200], supports_streaming="true",
+                          duration=dur, width=info.get("width") or "", height=info.get("height") or "")
+            if not r.get("ok"):
+                r = tg_upload("sendDocument", "document", path, chat_id=chat_id, caption=title[:200])
+        if not r.get("ok"):
+            raise JobError("fail")
+        tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
+    except JobError as e:
+        status(e.key, **e.kw)
+    except Exception as e:  # noqa
+        status(classify_error(str(e)))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)  # nothing is kept on our side

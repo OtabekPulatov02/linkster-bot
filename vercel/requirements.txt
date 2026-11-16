@@ -1,0 +1,4 @@
+yt-dlp[default]
+curl-cffi
+requests
+imageio-ffmpeg
