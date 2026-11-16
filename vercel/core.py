@@ -185,6 +185,7 @@ def with_ladder(fn, kind, t0, notify):
             raise
         except Exception as e:
             last = classify_error(str(e))
+            print(f'[ladder] client={c} err={str(e)[:300]}')
             if "live" in str(e).lower() and "is live" in str(e).lower():
                 raise JobError("live")
             if last == "private" and i >= 1:  # confirmed by 2 clients
