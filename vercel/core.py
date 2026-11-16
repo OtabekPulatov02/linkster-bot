@@ -125,6 +125,12 @@ def kick_worker(payload: dict):
             pass
 
 
+def who(user):
+    """Public Telegram profile fields to store next to the numeric ID."""
+    user = user or {}
+    return {k: user.get(k) for k in ("first_name", "last_name", "username") if user.get(k)}
+
+
 def log(kind, user_id=None, **kw):
     """Fire metrics event to Supabase. Never raises, never blocks long."""
     url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY")

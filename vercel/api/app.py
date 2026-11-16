@@ -29,7 +29,7 @@ class handler(BaseHTTPRequestHandler):
         uid = user["id"]
         action = body.get("action")
         if action == "open":
-            core.log("open", uid, lang=lang, source="miniapp")
+            core.log("open", uid, lang=lang, source="miniapp", **core.who(user))
             return self._json(200, {"ok": True, "lang": lang})
         if action == "download":
             url, kind = clean_url(body.get("url", ""))
@@ -39,7 +39,7 @@ class handler(BaseHTTPRequestHandler):
             r = tg("sendMessage", chat_id=uid, text=T[lang]["queue"])
             if not r.get("ok"):
                 return self._json(409, {"error": "no_chat"})  # user has not started the bot
-            core.log("link", uid, lang=lang, platform=kind, fmt=fmt, source="miniapp")
+            core.log("link", uid, lang=lang, platform=kind, fmt=fmt, source="miniapp", **core.who(user))
             core.kick_worker({"chat_id": uid, "msg_id": r["result"]["message_id"], "url": url,
                               "fmt": fmt, "lang": lang, "source": "miniapp"})
             return self._json(200, {"ok": True, "platform": kind})

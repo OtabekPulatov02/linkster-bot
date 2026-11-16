@@ -21,7 +21,7 @@ def handle(u):
             return
         tg("answerCallbackQuery", callback_query_id=cq["id"])
         tg("editMessageText", chat_id=msg["chat"]["id"], message_id=msg["message_id"], text=T[lang]["queue"])
-        core.log("link", msg["chat"]["id"], lang=lang, platform=kind, fmt=fmt, source="bot")
+        core.log("link", msg["chat"]["id"], lang=lang, platform=kind, fmt=fmt, source="bot", **core.who(cq.get("from")))
         core.kick_worker({"chat_id": msg["chat"]["id"], "msg_id": msg["message_id"], "url": url, "fmt": fmt, "lang": lang})
         return
     m = u.get("message") or {}
@@ -30,7 +30,7 @@ def handle(u):
     lang, chat = lang_of(m["from"]), m["chat"]["id"]
     text = m.get("text") or m.get("caption") or ""
     if text.startswith(("/start", "/help")):
-        core.log("start", m["from"]["id"], lang=lang, source="bot")
+        core.log("start", m["from"]["id"], lang=lang, source="bot", **core.who(m["from"]))
         tg("sendMessage", chat_id=chat, text=T[lang]["start"], parse_mode="HTML")
         return
     url, kind = clean_url(text)

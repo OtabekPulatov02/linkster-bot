@@ -61,6 +61,7 @@ td{padding:10px 8px;border-top:1px solid var(--line);font-weight:600;white-space
 .login .e{color:var(--err);font-size:13px;font-weight:600;height:20px;margin-top:10px}
 .hide{display:none!important}
 @media(max-width:860px){.kpis{grid-template-columns:repeat(2,1fr)}.grid,.grid.three{grid-template-columns:1fr}.k b{font-size:24px}}
+.mut{color:var(--muted);font-weight:500}
 </style>
 </head>
 <body>
@@ -116,6 +117,9 @@ td{padding:10px 8px;border-top:1px solid var(--line);font-weight:600;white-space
 (()=>{
 const $=id=>document.getElementById(id);
 let key=localStorage.getItem('lk_admin')||'', days=+(localStorage.getItem('lk_days')||14), timer;
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const who=u=>{if(!u||!u.user_id)return'—';const n=[u.first_name,u.last_name].filter(Boolean).join(' '),h=u.username?'@'+u.username:'';
+  return n?`<span title="ID ${u.user_id}">${esc(n)}</span>${h?` <span class="mut">${esc(h)}</span>`:''}`:h?`<span title="ID ${u.user_id}">${esc(h)}</span>`:`ID ${u.user_id}`};
 const N=n=>(n||0).toLocaleString('ru-RU');
 const MB=b=>b>=1e9?(b/1e9).toFixed(1)+' ГБ':b>=1e6?(b/1e6).toFixed(1)+' МБ':b>=1e3?Math.round(b/1e3)+' КБ':(b||0)+' Б';
 const PL={yt:'YouTube',ig:'Instagram'},SRC={bot:'Бот',miniapp:'Mini App'},LG={ru:'Русский',uz:'O‘zbek'};
@@ -153,10 +157,10 @@ function render(s){
   stacked('ch1',s.daily);line('ch2',s.daily);
   bars('b-plat',s.by_platform,PL);bars('b-fmt',s.by_fmt);bars('b-src',s.by_source,SRC);bars('b-lang',s.by_lang,LG);
   $('b-err').innerHTML=s.errors.length?s.errors.map(e=>`<div class="bar"><div><span>${ERR[e.err]||e.err}</span><span>${N(e.n)}</span></div></div>`).join(''):'<div class="empty">Ошибок нет 🎉</div>';
-  $('b-top').innerHTML=s.top_users.length?s.top_users.map((u,i)=>`<div class="bar"><div><span>${i+1}. ID ${u.user_id}</span><span>${N(u.n)}</span></div></div>`).join(''):'<div class="empty">Пока нет данных</div>';
+  $('b-top').innerHTML=s.top_users.length?s.top_users.map((u,i)=>`<div class="bar"><div><span>${i+1}. ${who(u)}</span><span>${N(u.n)}</span></div></div>`).join(''):'<div class="empty">Пока нет данных</div>';
   $('t-avg').textContent='среднее время: '+(t.avg_ms/1000).toFixed(1)+' с';
   $('rec').innerHTML=s.recent.length?s.recent.map(r=>{const d=new Date(r.ts);
-    return `<tr><td>${d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td><td><span class="tag ${r.kind==='job_ok'?'ok':'bad'}">${r.kind==='job_ok'?'ок':(ERR[r.err]||'ошибка')}</span></td><td>${PL[r.platform]||'—'}</td><td>${(r.fmt||'—').toUpperCase()}</td><td>${SRC[r.source]||'—'}</td><td>${r.ms?(r.ms/1000).toFixed(1)+' с':'—'}</td><td>${r.bytes?MB(r.bytes):'—'}</td><td>${r.user_id||'—'}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Пока нет загрузок</td></tr>';
+    return `<tr><td>${d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td><td><span class="tag ${r.kind==='job_ok'?'ok':'bad'}">${r.kind==='job_ok'?'ок':(ERR[r.err]||'ошибка')}</span></td><td>${PL[r.platform]||'—'}</td><td>${(r.fmt||'—').toUpperCase()}</td><td>${SRC[r.source]||'—'}</td><td>${r.ms?(r.ms/1000).toFixed(1)+' с':'—'}</td><td>${r.bytes?MB(r.bytes):'—'}</td><td>${who(r)}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Пока нет загрузок</td></tr>';
   $('upd').textContent='обновлено '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
 }
 async function load(){
