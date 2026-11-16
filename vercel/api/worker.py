@@ -11,7 +11,7 @@ class handler(BaseHTTPRequestHandler):
         if p.get("secret") != core.SECRET:
             self.send_response(403); self.end_headers(); return
         try:
-            core.run_job(p["chat_id"], p["msg_id"], p["url"], p["fmt"], p["lang"])
+            core.run_job(p["chat_id"], p["msg_id"], p["url"], p["fmt"], p["lang"], p.get("source", "bot"))
         except Exception as e:
             print("worker error", repr(e))
         self.send_response(200); self.end_headers(); self.wfile.write(b"done")

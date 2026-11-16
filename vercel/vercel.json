@@ -1,6 +1,26 @@
 {
   "functions": {
-    "api/worker.py": { "maxDuration": 300, "memory": 2048, "includeFiles": "{bin/**,core.py}" },
-    "api/webhook.py": { "maxDuration": 30, "includeFiles": "core.py" }
-  }
+    "api/worker.py": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "{bin/**,core.py}"
+    },
+    "api/webhook.py": {
+      "maxDuration": 30,
+      "includeFiles": "core.py"
+    },
+    "api/app.py": {
+      "maxDuration": 30,
+      "includeFiles": "core.py"
+    },
+    "api/stats.py": {
+      "maxDuration": 20
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/admin",
+      "destination": "/admin.html"
+    }
+  ]
 }

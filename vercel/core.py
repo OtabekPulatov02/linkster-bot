@@ -125,6 +125,38 @@ def kick_worker(payload: dict):
             pass
 
 
+def log(kind, user_id=None, **kw):
+    """Fire metrics event to Supabase. Never raises, never blocks long."""
+    url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY")
+    if not (url and key and os.environ.get("LOG_KEY")):
+        return
+    try:
+        requests.post(f"{url}/rest/v1/rpc/linkster_log", timeout=3,
+                      headers={"apikey": key, "Content-Type": "application/json"},
+                      json={"p_key": os.environ["LOG_KEY"], "p": {"kind": kind, "user_id": user_id, **kw}})
+    except Exception as e:
+        print("log failed", repr(e))
+
+
+def verify_init_data(init_data: str, max_age=86400):
+    """Validate Telegram WebApp initData. Returns user dict or None."""
+    import hmac
+    from urllib.parse import parse_qsl
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+        got = pairs.pop("hash", "")
+        check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+        calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, got):
+            return None
+        if time.time() - int(pairs.get("auth_date", "0")) > max_age:
+            return None
+        return json.loads(pairs["user"])
+    except Exception:
+        return None
+
+
 # ---------- tools ----------
 def _exe(src: Path, name: str) -> str:
     dst = TMP / name
@@ -252,13 +284,21 @@ def download_audio(url, outdir, client, kbps):
     return out
 
 
-def run_job(chat_id, msg_id, url, fmt, lang):
+def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
     t0 = time.time()
     tx = T[lang]
     kind = clean_url(url)[1]
 
     def status(key, **kw):
         tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=tx[key].format(**kw) if kw else tx[key])
+
+    def ok_log(nbytes):
+        log("job_ok", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
+            ms=int((time.time() - t0) * 1000), bytes=nbytes)
+
+    def fail_log(err):
+        log("job_fail", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
+            ms=int((time.time() - t0) * 1000), err=err)
 
     work = Path(tempfile.mkdtemp(dir=TMP))
     try:
@@ -305,9 +345,14 @@ def run_job(chat_id, msg_id, url, fmt, lang):
         if not r.get("ok"):
             raise JobError("fail")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
+        ok_log(path.stat().st_size)
     except JobError as e:
         status(e.key, **e.kw)
+        fail_log(e.key)
     except Exception as e:  # noqa
-        status(classify_error(str(e)))
+        k = classify_error(str(e))
+        print("[job] unexpected", repr(e)[:300])
+        status(k)
+        fail_log(k)
     finally:
         shutil.rmtree(work, ignore_errors=True)  # nothing is kept on our side
