@@ -12,10 +12,11 @@ import core, ig
 
 def is_admin(key):
     try:
-        r = requests.post(f"{os.environ['SUPABASE_URL']}/rest/v1/rpc/linkster_check", timeout=8,
+        # linkster_stats checks the admin key server-side and refuses anything else
+        r = requests.post(f"{os.environ['SUPABASE_URL']}/rest/v1/rpc/linkster_stats", timeout=10,
                           headers={"apikey": os.environ["SUPABASE_KEY"], "Content-Type": "application/json"},
-                          json={"p_name": "admin", "p_key": key})
-        return r.status_code == 200 and r.json() is True
+                          json={"p_key": key, "p_days": 1})
+        return r.status_code == 200
     except Exception:
         return False
 
