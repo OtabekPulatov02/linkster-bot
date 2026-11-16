@@ -34,8 +34,11 @@ T = {
         "too_long": "⛔ Видео длиннее {m} мин — слишком большое для бота. Попробуй MP3.",
         "too_big": "⛔ Не уложился в лимит 50 МБ даже в минимальном качестве. Попробуй MP3.",
         "live": "⛔ Прямые эфиры не поддерживаются.",
-        "private": "🔒 Видео недоступно: приватное, удалено, с возрастным ограничением или закрыто для региона.",
-        "login": "🔐 Сервис просит вход для этого видео. Попробуй позже или другую ссылку.",
+        "private": "🔒 Видео недоступно: оно приватное или удалено.",
+        "no_video": "📷 В этом посте нет видео, только фото. Пришли ссылку на Reels или пост с видео.",
+        "age": "🔞 У видео возрастное ограничение: YouTube отдаёт его только аккаунтам 18+. Скачать не получится.",
+        "geo": "🌍 Видео закрыто для страны, где стоит сервер бота. Скачать не получится.",
+        "login": "🔐 {svc} не отдал видео без входа в аккаунт. Обычно это временно: попробуй через 10–15 минут.",
         "blocked": "🚧 Сервис блокирует загрузку с сервера. Попробуй через несколько минут.",
         "timeout": "⏱ Не успел обработать за отведённое время. Попробуй MP3 или более короткое видео.",
         "fail": "❌ Не получилось скачать. Проверь ссылку и попробуй ещё раз.",
@@ -55,8 +58,11 @@ T = {
         "too_long": "⛔ Video {m} daqiqadan uzun. MP3 ni sinab ko'ring.",
         "too_big": "⛔ Eng past sifatda ham 50 MB ga sig'maydi. MP3 ni sinab ko'ring.",
         "live": "⛔ Jonli efirlar qo'llab-quvvatlanmaydi.",
-        "private": "🔒 Video mavjud emas: yopiq, o'chirilgan, yosh cheklovi yoki hudud bo'yicha yopiq.",
-        "login": "🔐 Bu video uchun kirish talab qilinmoqda. Keyinroq urinib ko'ring.",
+        "private": "🔒 Video mavjud emas: yopiq yoki o'chirilgan.",
+        "no_video": "📷 Bu postda video yo'q, faqat rasm. Reels yoki videoli post havolasini yuboring.",
+        "age": "🔞 Videoda yosh cheklovi bor: YouTube uni faqat 18+ akkauntlarga beradi. Yuklab bo'lmaydi.",
+        "geo": "🌍 Video bot serveri joylashgan mamlakat uchun yopiq. Yuklab bo'lmaydi.",
+        "login": "🔐 {svc} videoni akkauntga kirmasdan bermadi. Odatda vaqtinchalik: 10–15 daqiqadan so'ng urinib ko'ring.",
         "blocked": "🚧 Xizmat serverdan yuklashni bloklamoqda. Bir necha daqiqadan so'ng urinib ko'ring.",
         "timeout": "⏱ Ajratilgan vaqtda ulgurmadim. MP3 yoki qisqaroq videoni sinab ko'ring.",
         "fail": "❌ Yuklab bo'lmadi. Havolani tekshirib, qayta urinib ko'ring.",
@@ -82,6 +88,17 @@ def clean_url(text):
 
 def classify_error(err: str) -> str:
     e = err.lower()
+    if "there is no video in this post" in e:
+        return "no_video"
+    if any(s in e for s in ("age-restricted", "age restricted", "confirm your age", "inappropriate for some users")):
+        return "age"
+    if any(s in e for s in ("not available in your country", "geo restrict", "geo-restrict", "blocked it in your country",
+                            "not made this video available in your country")):
+        return "geo"
+    if any(s in e for s in ("private video", "this account is private", "has been removed", "video unavailable")):
+        return "private"
+    if "no video formats found" in e:
+        return "login"
     if any(s in e for s in ("login required", "log in", "sign in", "cookies", "rate-limit", "rate limit",
                             "empty media response", "confirm you")):
         return "login"
@@ -246,6 +263,8 @@ def with_ladder(fn, kind, t0, notify):
             trace(f'[ladder] client={c} err={str(e)[:300]}')
             if "live" in str(e).lower() and "is live" in str(e).lower():
                 raise JobError("live", detail=errs[-1])
+            if last in ("no_video", "age", "geo"):   # no other client will change this
+                raise JobError(last, detail=" | ".join(errs))
             if last == "private" and i >= 1:  # confirmed by 2 clients
                 raise JobError("private", detail=" | ".join(errs))
             if i == 0:
@@ -314,7 +333,8 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
     kind = clean_url(url)[1]
 
     def status(key, **kw):
-        tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=tx[key].format(**kw) if kw else tx[key])
+        kw = {"svc": "Instagram" if kind == "ig" else "YouTube", **kw}
+        tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=tx[key].format(**kw))
 
     def ok_log(nbytes, detail=None):
         log("job_ok", chat_id, lang=lang, platform=kind, fmt=fmt, source=source,
