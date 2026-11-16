@@ -119,11 +119,68 @@ def _embed(s, sc):
     raise IGError("private", "embed: no media found")
 
 
-def fetch(url, cookie_path=None):
+def _best(cands, key="width"):
+    cands = [c for c in (cands or []) if c.get("url")]
+    return max(cands, key=lambda c: c.get(key) or 0) if cands else None
+
+
+def _items_from_product(p):
+    """Instagram API media item (as yt-dlp receives it) -> items."""
+    def one(m):
+        v = _best(m.get("video_versions"))
+        img = _best((m.get("image_versions2") or {}).get("candidates"))
+        if v:
+            return {"type": "video", "url": v["url"], "w": v.get("width"), "h": v.get("height"),
+                    "thumb": img and img["url"]}
+        if img:
+            return {"type": "photo", "url": img["url"], "w": img.get("width"), "h": img.get("height")}
+        return None
+    kids = p.get("carousel_media") or []
+    items = [i for i in (one(m) for m in (kids or [p])) if i]
+    return {"items": items, "caption": ((p.get("caption") or {}).get("text") or ""),
+            "owner": ((p.get("user") or {}).get("username") or "")}
+
+
+def _ytdlp(url, ydl_params):
+    """Let yt-dlp's Instagram extractor do the hard part (tokens, cookies, fallbacks) and keep the raw
+    media it found, instead of letting it fail with 'There is no video in this post' on photos."""
+    import yt_dlp
+    from yt_dlp.extractor.instagram import InstagramIE
+    got = {}
+
+    class Capture(InstagramIE):
+        def _extract_product(self, product_info, video_id=None, get_comments=True):
+            got["p"] = product_info[0] if isinstance(product_info, list) else product_info
+            return {"id": video_id or "x", "formats": [{"url": "https://example.invalid/x.mp4"}]}
+
+    with yt_dlp.YoutubeDL({**ydl_params, "skip_download": True}) as y:
+        ie = Capture(y)
+        try:
+            ie.extract(url)
+        except Exception as e:
+            if "p" not in got:
+                raise IGError("login" if "login" in str(e).lower() or "empty media" in str(e).lower() else "private",
+                              f"yt-dlp: {str(e)[:250]}")
+    if "p" not in got:
+        raise IGError("private", "yt-dlp: no media")
+    return _items_from_product(got["p"])
+
+
+def fetch(url, cookie_path=None, ydl_params=None):
     sc = shortcode(url)
     if not sc:
         raise IGError("unsupported", "not a post/reel link")
     errs = []
+    if ydl_params is not None:
+        try:
+            res = _ytdlp(url, ydl_params)
+            if res["items"]:
+                res["shortcode"] = sc
+                return res
+        except IGError as e:
+            errs.append(e.detail)
+        except Exception as e:
+            errs.append(f"yt-dlp: {repr(e)[:200]}")
     sessions = [_session()]
     if cookie_path:
         s2 = _session(cookie_path)

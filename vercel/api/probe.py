@@ -30,7 +30,8 @@ class handler(BaseHTTPRequestHandler):
         out = {"url": url, "kind": kind}
         if kind == "ig":
             try:
-                res = ig.fetch(url, core.cookies_file())
+                core.tools()
+                res = ig.fetch(url, core.cookies_file(), core.ydl_opts(Path(tempfile.mkdtemp(dir=core.TMP))))
                 out["ig"] = {"owner": res["owner"], "n": len(res["items"]),
                              "items": [{"type": i["type"], "w": i.get("w"), "h": i.get("h"), "url": i["url"][:90]} for i in res["items"]]}
             except ig.IGError as e:

@@ -423,7 +423,7 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
         """Instagram posts via ig.py: photos, carousels and videos. Returns True when handled."""
         import ig
         try:
-            res = ig.fetch(url, cookies_file())
+            res = ig.fetch(url, cookies_file(), ydl_opts(work))
         except ig.IGError as e:
             ig_errs.append(e.detail)
             return False
