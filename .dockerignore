@@ -1,0 +1,6 @@
+.bot_token
+.env
+*.txt.bak
+cookies.txt
+__pycache__/
+t/
