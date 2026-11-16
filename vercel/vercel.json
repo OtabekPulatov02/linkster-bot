@@ -3,7 +3,7 @@
     "api/worker.py": {
       "maxDuration": 300,
       "memory": 2048,
-      "includeFiles": "{bin/**,core.py}"
+      "includeFiles": "{bin/**,core.py,ig.py}"
     },
     "api/webhook.py": {
       "maxDuration": 30,
@@ -15,6 +15,11 @@
     },
     "api/stats.py": {
       "maxDuration": 20
+    },
+    "api/probe.py": {
+      "maxDuration": 120,
+      "memory": 1024,
+      "includeFiles": "{bin/**,core.py,ig.py}"
     }
   },
   "rewrites": [
