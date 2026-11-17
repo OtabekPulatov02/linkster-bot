@@ -20,9 +20,16 @@
       "maxDuration": 120,
       "memory": 1024,
       "includeFiles": "{bin/**,core.py,ig.py}"
+    },
+    "api/history.py": {
+      "maxDuration": 20
     }
   },
   "rewrites": [
+    {
+      "source": "/admin/history",
+      "destination": "/history.html"
+    },
     {
       "source": "/admin",
       "destination": "/admin.html"

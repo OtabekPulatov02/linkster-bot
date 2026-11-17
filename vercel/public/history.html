@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#000000">
+<title>Linkster · Все загрузки</title>
+<link rel="icon" href="/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#000;--card:#0d0d14;--card2:#14141f;--line:rgba(255,255,255,.09);--text:#fff;--muted:#8c8ca3;
+  --v1:#6b4bff;--v2:#b44bff;--ok:#3ddc97;--err:#ff6b81;--grad:linear-gradient(135deg,#6b4bff,#b44bff)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Plus Jakarta Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+body::before{content:"";position:fixed;left:50%;top:-200px;width:900px;height:500px;transform:translateX(-50%);
+  background:radial-gradient(closest-side,rgba(107,75,255,.25),transparent 70%);filter:blur(30px);pointer-events:none}
+.wrap{position:relative;max-width:1100px;margin:0 auto;padding:20px 18px 60px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0 18px;flex-wrap:wrap}
+header .l{display:flex;align-items:center;gap:14px}
+header img{height:34px;display:block;mix-blend-mode:screen}
+h1{font-size:20px;font-weight:800;letter-spacing:-.3px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card2);color:#fff;font:inherit;font-weight:700;font-size:13px;padding:10px 14px;border-radius:12px;cursor:pointer;text-decoration:none}
+.btn.main{border:0;background:var(--grad)}
+.btn:disabled{opacity:.5;cursor:default}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.pill{display:flex;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:3px}
+.pill button{border:0;background:none;color:var(--muted);font:inherit;font-weight:700;font-size:13px;padding:8px 12px;border-radius:9px;cursor:pointer}
+.pill button.on{background:var(--grad);color:#fff}
+.search{flex:1;min-width:200px;background:var(--card2);border:1.5px solid var(--line);border-radius:12px;color:#fff;font:inherit;font-weight:600;font-size:14px;padding:10px 14px;outline:0}
+.search:focus{border-color:var(--v1)}
+.sum{display:flex;gap:16px;color:var(--muted);font-size:13px;font-weight:600;margin:4px 2px 12px}
+.sum b{color:#fff}.sum .g{color:var(--ok)}.sum .r{color:var(--err)}
+.p{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:8px 10px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--muted);font-weight:600;text-align:left;padding:10px 8px;font-size:12px;position:sticky;top:0;background:var(--card)}
+td{padding:10px 8px;border-top:1px solid var(--line);font-weight:600;white-space:nowrap}
+tr.row{cursor:pointer}tr.row:hover td{background:rgba(255,255,255,.025)}
+tr.det td{white-space:normal;color:var(--muted);font-weight:500;font-size:12.5px;background:rgba(255,107,129,.05);word-break:break-word}
+.tag{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11.5px;font-weight:700}
+.tag.ok{background:rgba(61,220,151,.14);color:var(--ok)}.tag.bad{background:rgba(255,107,129,.14);color:var(--err)}
+.mut{color:var(--muted);font-weight:500}
+.empty{color:var(--muted);font-size:13px;font-weight:500;padding:18px 8px;text-align:center}
+.more{display:flex;justify-content:center;margin-top:14px}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="l"><img src="/logo-wide.png" alt="Linkster"><h1>Все загрузки</h1></div>
+    <a class="btn" href="/admin">← Дашборд</a>
+  </header>
+
+  <div class="bar">
+    <div class="pill" id="st"><button data-v="" class="on">Все</button><button data-v="ok">Успешные</button><button data-v="fail">Ошибки</button></div>
+    <div class="pill" id="pl"><button data-v="" class="on">Все</button><button data-v="yt">YouTube</button><button data-v="ig">Instagram</button></div>
+    <input class="search" id="q" type="search" placeholder="Имя, @username или ID" autocomplete="off">
+  </div>
+  <div class="sum" id="sum">—</div>
+
+  <div class="p"><div class="scroll"><table>
+    <thead><tr><th>Дата и время</th><th>Статус</th><th>Платформа</th><th>Формат</th><th>Источник</th><th>Время обр.</th><th>Размер</th><th>Пользователь</th></tr></thead>
+    <tbody id="rows"></tbody></table></div></div>
+  <div class="more"><button class="btn main hide" id="more">Показать ещё</button></div>
+</div>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const key=localStorage.getItem('lk_admin')||'';
+if(!key){location.replace('/admin');return}
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const who=u=>{if(!u||!u.user_id)return'—';const n=[u.first_name,u.last_name].filter(Boolean).join(' '),h=u.username?'@'+u.username:'';
+  return n?`<span title="ID ${u.user_id}">${esc(n)}</span>${h?` <span class="mut">${esc(h)}</span>`:''}`:h?`<span title="ID ${u.user_id}">${esc(h)}</span>`:`ID ${u.user_id}`};
+const N=n=>(n||0).toLocaleString('ru-RU');
+const MB=b=>b>=1e9?(b/1e9).toFixed(1)+' ГБ':b>=1e6?(b/1e6).toFixed(1)+' МБ':b>=1e3?Math.round(b/1e3)+' КБ':(b||0)+' Б';
+const PL={yt:'YouTube',ig:'Instagram'},SRC={bot:'Бот',miniapp:'Mini App'};
+const ERR={login:'Нужен вход',private:'Недоступно',blocked:'Блокировка IP',fail:'Ошибка',timeout:'Таймаут',too_big:'Больше 50 МБ',
+  too_long:'Слишком длинное',live:'Прямой эфир',no_video:'Только фото',age:'18+',geo:'Закрыто для региона'};
+const PAGE=50;
+let st='',pl='',q='',last=null,busy=false,seq=0;
+
+function row(r){
+  const d=new Date(r.ts), ok=r.kind==='job_ok';
+  const tag=`<span class="tag ${ok?'ok':'bad'}">${ok?'ок':(ERR[r.err]||'ошибка')}</span>`;
+  const main=`<tr class="row"${r.detail?' data-d="1"':''}><td>${d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}</td><td>${tag}</td><td>${PL[r.platform]||'—'}</td><td>${(r.fmt||'—').toUpperCase()}</td><td>${SRC[r.source]||'—'}</td><td>${r.ms?(r.ms/1000).toFixed(1)+' с':'—'}</td><td>${r.bytes?MB(r.bytes):'—'}</td><td>${who(r)}</td></tr>`;
+  return main+(r.detail?`<tr class="det hide"><td colspan="8">${esc(r.detail)}</td></tr>`:'');
+}
+
+async function load(reset){
+  if(busy&&!reset)return; busy=true; const my=++seq;
+  if(reset){last=null;$('rows').innerHTML='<tr><td colspan="8" class="empty">Загрузка…</td></tr>';$('more').classList.add('hide')}
+  $('more').disabled=true;
+  const p=new URLSearchParams({limit:PAGE});
+  if(last)p.set('before',last); if(st)p.set('status',st); if(pl)p.set('platform',pl); if(q)p.set('q',q);
+  try{
+    const r=await fetch('/api/history?'+p,{headers:{'X-Admin-Key':key},cache:'no-store'});
+    if(my!==seq)return;
+    if(r.status===403){localStorage.removeItem('lk_admin');location.replace('/admin');return}
+    if(!r.ok)throw 0;
+    const s=await r.json();
+    const html=s.rows.map(row).join('');
+    if(reset)$('rows').innerHTML=html||'<tr><td colspan="8" class="empty">Ничего не найдено</td></tr>';
+    else $('rows').insertAdjacentHTML('beforeend',html);
+    if(s.rows.length)last=s.rows[s.rows.length-1].ts;
+    const shown=$('rows').querySelectorAll('tr.row').length;
+    $('sum').innerHTML=`<span>Всего: <b>${N(s.total)}</b></span><span class="g">успешных ${N(s.ok)}</span><span class="r">ошибок ${N(s.fail)}</span><span>показано ${N(shown)}</span>`;
+    $('more').classList.toggle('hide',shown>=s.total||s.rows.length<PAGE);
+  }catch(e){ if(my===seq&&reset)$('rows').innerHTML='<tr><td colspan="8" class="empty">Ошибка сети. Обнови страницу.</td></tr>' }
+  finally{ if(my===seq){busy=false;$('more').disabled=false} }
+}
+
+function pill(id,set){$(id).addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  [...$(id).children].forEach(x=>x.classList.toggle('on',x===b));set(b.dataset.v);load(true)})}
+pill('st',v=>st=v); pill('pl',v=>pl=v);
+let t; $('q').addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{q=$('q').value.trim();load(true)},350)});
+$('more').addEventListener('click',()=>load(false));
+// tap a failed row to see what the service answered
+$('rows').addEventListener('click',e=>{const tr=e.target.closest('tr.row');if(tr&&tr.dataset.d)tr.nextElementSibling.classList.toggle('hide')});
+load(true);
+})();
+</script>
+</body>
+</html>
