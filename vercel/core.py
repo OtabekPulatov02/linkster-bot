@@ -43,6 +43,7 @@ T = {
         "timeout": "⏱ Не успел обработать за отведённое время. Попробуй MP3 или более короткое видео.",
         "fail": "❌ Не получилось скачать. Проверь ссылку и попробуй ещё раз.",
         "credit": "Скачано с помощью @linkster_bot",
+        "tg_timeout": "⏳ Telegram слишком долго принимает файл и не подтвердил отправку. Если видео не придёт в течение пары минут, пришли ссылку ещё раз.",
         "fallback_mp3": "📦 Видео не помещается в лимит Telegram для ботов (50 МБ), присылаю звук в MP3.",
         "photo_only_mp3": "🖼 В этом посте нет звука, только фото. Присылаю фото.",
         "skipped": "⚠️ Часть файлов больше 50 МБ, их Telegram не даёт отправить ботам: {n} шт.",
@@ -69,6 +70,7 @@ T = {
         "blocked": "🚧 Xizmat serverdan yuklashni bloklamoqda. Bir necha daqiqadan so'ng urinib ko'ring.",
         "timeout": "⏱ Ajratilgan vaqtda ulgurmadim. MP3 yoki qisqaroq videoni sinab ko'ring.",
         "fail": "❌ Yuklab bo'lmadi. Havolani tekshirib, qayta urinib ko'ring.",
+        "tg_timeout": "⏳ Telegram faylni juda uzoq qabul qilmoqda va yuborilganini tasdiqlamadi. Video bir-ikki daqiqada kelmasa, havolani qayta yuboring.",
         "fallback_mp3": "📦 Video Telegram botlar limitiga (50 MB) sig'maydi, ovozni MP3 da yuboraman.",
         "photo_only_mp3": "🖼 Bu postda ovoz yo'q, faqat rasm. Rasmlarni yuboraman.",
         "skipped": "⚠️ Ba'zi fayllar 50 MB dan katta, Telegram botlarga ularni yuborishga ruxsat bermaydi: {n} ta.",
@@ -128,9 +130,11 @@ def tg(method, **data):
 def tg_upload(method, field, path: Path, timeout=200, **data):
     """Upload a file. A 5xx or a timeout does NOT mean failure: Telegram often finishes
     processing a big file after its gateway gave up, so such results are marked uncertain."""
+    t = time.time()
     try:
         with open(path, "rb") as f:
             r = requests.post(f"{API}/{method}", data=data, files={field: (path.name, f)}, timeout=timeout)
+        print(f"[upload] {method} {path.stat().st_size} B in {time.time() - t:.1f}s -> {r.status_code}", file=sys.stderr, flush=True)
         try:
             j = r.json()
         except ValueError:
@@ -153,9 +157,10 @@ def send_media(chat_id, files, caption, timeout):
             if not last.get("ok") and not last.get("uncertain"):
                 last = tg_upload("sendDocument", "document", p, timeout=timeout, chat_id=chat_id, caption=caption)
         else:
-            last = tg_upload("sendVideo", "video", p, timeout=timeout, chat_id=chat_id, caption=caption, supports_streaming="true")
-            if not last.get("ok") and not last.get("uncertain"):
-                last = tg_upload("sendDocument", "document", p, timeout=timeout, chat_id=chat_id, caption=caption)
+            t = time.time()
+            last = tg_upload("sendVideo", "video", p, timeout=min(timeout, 110), chat_id=chat_id, caption=caption, supports_streaming="true")
+            if not last.get("ok") and timeout - (time.time() - t) > 40:
+                last = tg_upload("sendDocument", "document", p, timeout=timeout - (time.time() - t), chat_id=chat_id, caption=caption)
         return last
     for start in range(0, len(files), 10):
         chunk = files[start:start + 10]
@@ -186,6 +191,34 @@ def send_media(chat_id, files, caption, timeout):
         if not last.get("ok") and not last.get("uncertain"):
             return last
     return last
+
+
+def send_by_url(chat_id, items, caption):
+    """Let Telegram fetch the media itself (photos <= 5 MB, videos <= 20 MB by URL). Albums of up to 10.
+    Returns True only when every message was accepted."""
+    t = time.time()
+    try:
+        for start in range(0, len(items), 10):
+            chunk, cap = items[start:start + 10], caption if start == 0 else ""
+            if len(chunk) == 1:
+                it = chunk[0]
+                m = "sendVideo" if it["type"] == "video" else "sendPhoto"
+                d = {"chat_id": chat_id, it["type"]: it["url"], "caption": cap}
+                if it["type"] == "video":
+                    d["supports_streaming"] = True
+                r = requests.post(f"{API}/{m}", json=d, timeout=60).json()
+            else:
+                media = [{"type": it["type"], "media": it["url"], **({"caption": cap} if i == 0 and cap else {})}
+                         for i, it in enumerate(chunk)]
+                r = requests.post(f"{API}/sendMediaGroup", json={"chat_id": chat_id, "media": media}, timeout=90).json()
+            if not r.get("ok"):
+                print(f"[by-url] refused: {str(r)[:200]}", file=sys.stderr, flush=True)
+                return False if start == 0 else "partial"
+        print(f"[by-url] {len(items)} item(s) in {time.time() - t:.1f}s", file=sys.stderr, flush=True)
+        return True
+    except Exception as e:
+        print(f"[by-url] error {repr(e)[:200]}", file=sys.stderr, flush=True)
+        return False
 
 
 def to_mp3(src: Path, out: Path, kbps):
@@ -402,8 +435,8 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
 
     def finish(r, nbytes, note=None):
         if r.get("uncertain"):
-            note = f"upload uncertain, assumed delivered: {r.get('description', '')}"[:300]
-        elif not r.get("ok"):
+            raise JobError("tg_timeout", detail=f"telegram upload unconfirmed: {r.get('description', '')}"[:300])
+        if not r.get("ok"):
             raise JobError("fail", detail=f"telegram upload: {str(r)[:300]}")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
         ok_log(nbytes, detail=note)
@@ -443,6 +476,14 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
             return True
         if fmt == "mp3":
             tg("sendMessage", chat_id=chat_id, text=tx["photo_only_mp3"])
+        status("upload")
+        sent = send_by_url(chat_id, items, cap)
+        if sent is True:
+            tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
+            ok_log(None, detail=f"ig by url: {len(items)} item(s)")
+            return True
+        if sent == "partial":   # some albums went out; do not resend them
+            raise JobError("fail", detail="ig by url: only part of the album was accepted")
         status("download")
         files, skipped, total = [], 0, 0
         for n, it in enumerate(items):
@@ -523,10 +564,10 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
             r = tg_upload("sendAudio", "audio", path, timeout=left, chat_id=chat_id, title=title, caption=cap,
                           performer=(info.get("uploader") or "")[:64], duration=dur)
         else:
-            r = tg_upload("sendVideo", "video", path, timeout=left, chat_id=chat_id, caption=cap, supports_streaming="true",
+            r = tg_upload("sendVideo", "video", path, timeout=min(left, 110), chat_id=chat_id, caption=cap, supports_streaming="true",
                           duration=dur, width=info.get("width") or "", height=info.get("height") or "")
-            if not r.get("ok") and not r.get("uncertain"):   # a real rejection: retry as a plain file
-                left = max(30, DEADLINE + 25 - (time.time() - t0))
+            left = DEADLINE + 25 - (time.time() - t0)
+            if not r.get("ok") and left > 40:   # refused or timed out: send as a plain file, no video processing
                 r = tg_upload("sendDocument", "document", path, timeout=left, chat_id=chat_id, caption=cap)
         # Telegram's gateway may time out while the file still arrives: finish() treats that as delivered.
         finish(r, path.stat().st_size, note)

@@ -123,7 +123,7 @@ const who=u=>{if(!u||!u.user_id)return'—';const n=[u.first_name,u.last_name].f
 const N=n=>(n||0).toLocaleString('ru-RU');
 const MB=b=>b>=1e9?(b/1e9).toFixed(1)+' ГБ':b>=1e6?(b/1e6).toFixed(1)+' МБ':b>=1e3?Math.round(b/1e3)+' КБ':(b||0)+' Б';
 const PL={yt:'YouTube',ig:'Instagram'},SRC={bot:'Бот',miniapp:'Mini App'},LG={ru:'Русский',uz:'O‘zbek'};
-const ERR={no_video:'Только фото',age:'18+',geo:'Закрыто для региона',login:'Нужен вход / бот-защита',private:'Видео недоступно',blocked:'Блокировка IP',fail:'Прочая ошибка',timeout:'Таймаут',too_big:'Не влезло в 50 МБ',too_long:'Слишком длинное',live:'Прямой эфир'};
+const ERR={tg_timeout:'Telegram не принял',no_video:'Только фото',age:'18+',geo:'Закрыто для региона',login:'Нужен вход / бот-защита',private:'Видео недоступно',blocked:'Блокировка IP',fail:'Прочая ошибка',timeout:'Таймаут',too_big:'Не влезло в 50 МБ',too_long:'Слишком длинное',live:'Прямой эфир'};
 function bars(el,obj,map){
   const e=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]), t=e.reduce((s,x)=>s+x[1],0);
   $(el).innerHTML=e.length?e.map(([k,v])=>`<div class="bar"><div><span>${(map&&map[k])||k.toUpperCase()}</span><span>${N(v)} · ${Math.round(v/t*100)}%</span></div><u><i style="width:${v/t*100}%"></i></u></div>`).join(''):'<div class="empty">Пока нет данных</div>';

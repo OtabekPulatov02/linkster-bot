@@ -1,4 +1,7 @@
 {
+  "regions": [
+    "fra1"
+  ],
   "functions": {
     "api/worker.py": {
       "maxDuration": 300,
