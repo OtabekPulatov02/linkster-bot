@@ -193,6 +193,20 @@ def send_media(chat_id, files, caption, timeout):
     return last
 
 
+def deliver(method, field, path: Path, budget, **data):
+    """Upload with one fallback: a refused or timed-out sendAudio/sendVideo is sent again as a plain
+    document (Telegram does no media processing on documents). Never runs past `budget` seconds."""
+    t = time.time()
+    r = tg_upload(method, field, path, timeout=max(20, min(budget, 110)), **data)
+    left = budget - (time.time() - t)
+    if not r.get("ok") and method != "sendDocument" and left > 40:
+        print(f"[upload] {method} failed ({r.get('description', '')}), retry as document", file=sys.stderr, flush=True)
+        r = tg_upload("sendDocument", "document", path, timeout=left,
+                      chat_id=data.get("chat_id"), caption=data.get("caption", ""))
+    r["_size"], r["_secs"] = path.stat().st_size, round(time.time() - t, 1)
+    return r
+
+
 def send_by_url(chat_id, items, caption):
     """Let Telegram fetch the media itself (photos <= 5 MB, videos <= 20 MB by URL). Albums of up to 10.
     Returns True only when every message was accepted."""
@@ -435,7 +449,8 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
 
     def finish(r, nbytes, note=None):
         if r.get("uncertain"):
-            raise JobError("tg_timeout", detail=f"telegram upload unconfirmed: {r.get('description', '')}"[:300])
+            raise JobError("tg_timeout", detail=f"telegram upload unconfirmed: {r.get('description', '')}; "
+                                                f"{r.get('_size', '?')} B, {r.get('_secs', '?')} s"[:300])
         if not r.get("ok"):
             raise JobError("fail", detail=f"telegram upload: {str(r)[:300]}")
         tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
@@ -470,8 +485,8 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
             out = to_mp3(src, work / "audio.mp3", 192)
             status("upload")
             left = max(30, DEADLINE + 25 - (time.time() - t0))
-            r = tg_upload("sendAudio", "audio", out, timeout=left, chat_id=chat_id, caption=cap,
-                          title=(res.get("owner") or "Instagram")[:64])
+            r = deliver("sendAudio", "audio", out, left, chat_id=chat_id, caption=cap,
+                        title=(res.get("owner") or "Instagram")[:64])
             finish(r, out.stat().st_size, "ig direct")
             return True
         if fmt == "mp3":
@@ -561,15 +576,11 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
         cap = f"{title[:200]}\n\n{tx['credit']}"
         left = max(30, DEADLINE + 25 - (time.time() - t0))   # never outlive the function
         if fmt == "mp3":
-            r = tg_upload("sendAudio", "audio", path, timeout=left, chat_id=chat_id, title=title, caption=cap,
-                          performer=(info.get("uploader") or "")[:64], duration=dur)
+            r = deliver("sendAudio", "audio", path, left, chat_id=chat_id, title=title, caption=cap,
+                        performer=(info.get("uploader") or "")[:64], duration=dur)
         else:
-            r = tg_upload("sendVideo", "video", path, timeout=min(left, 110), chat_id=chat_id, caption=cap, supports_streaming="true",
-                          duration=dur, width=info.get("width") or "", height=info.get("height") or "")
-            left = DEADLINE + 25 - (time.time() - t0)
-            if not r.get("ok") and left > 40:   # refused or timed out: send as a plain file, no video processing
-                r = tg_upload("sendDocument", "document", path, timeout=left, chat_id=chat_id, caption=cap)
-        # Telegram's gateway may time out while the file still arrives: finish() treats that as delivered.
+            r = deliver("sendVideo", "video", path, left, chat_id=chat_id, caption=cap, supports_streaming="true",
+                        duration=dur, width=info.get("width") or "", height=info.get("height") or "")
         finish(r, path.stat().st_size, note)
     except JobError as e:
         status(e.key, **e.kw)
