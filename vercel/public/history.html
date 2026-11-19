@@ -80,7 +80,7 @@ const N=n=>(n||0).toLocaleString('ru-RU');
 const MB=b=>b>=1e9?(b/1e9).toFixed(1)+' ГБ':b>=1e6?(b/1e6).toFixed(1)+' МБ':b>=1e3?Math.round(b/1e3)+' КБ':(b||0)+' Б';
 const PL={yt:'YouTube',ig:'Instagram'},SRC={bot:'Бот',miniapp:'Mini App'};
 const ERR={tg_timeout:'Telegram не принял',login:'Нужен вход',private:'Недоступно',blocked:'Блокировка IP',fail:'Ошибка',timeout:'Таймаут',too_big:'Больше 50 МБ',
-  too_long:'Слишком длинное',live:'Прямой эфир',no_video:'Только фото',age:'18+',geo:'Закрыто для региона'};
+  too_long:'Слишком длинное',live:'Прямой эфир',no_video:'Только фото',story_gone:'История исчезла',story_login:'Истории: нет сессии IG',age:'18+',geo:'Закрыто для региона'};
 const PAGE=50;
 let st='',pl='',q='',last=null,busy=false,seq=0;
 

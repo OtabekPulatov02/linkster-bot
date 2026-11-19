@@ -22,7 +22,7 @@ ALLOWED = {"youtube.com": "yt", "m.youtube.com": "yt", "music.youtube.com": "yt"
 T = {
     "ru": {
         "start": ("👋 <b>Привет!</b>\n\nПришли ссылку на видео из <b>YouTube</b> или <b>Instagram</b> "
-                  "(Reels, посты, Shorts), и я пришлю файл в <b>MP4</b> или <b>MP3</b>.\n\n"
+                  "(Reels, посты, истории, Shorts), и я пришлю файл в <b>MP4</b> или <b>MP3</b>.\n\n"
                   "Лимит Telegram для ботов — 50 МБ: длинные видео сжимаются по качеству.\n"
                   "Я ничего не храню у себя: файл остаётся только в этом чате — перешли его куда нужно."),
         "choose": "Что скачать?", "mp4": "🎬 MP4 (видео)", "mp3": "🎵 MP3 (звук)",
@@ -47,9 +47,11 @@ T = {
         "fallback_mp3": "📦 Видео не помещается в лимит Telegram для ботов (50 МБ), присылаю звук в MP3.",
         "photo_only_mp3": "🖼 В этом посте нет звука, только фото. Присылаю фото.",
         "skipped": "⚠️ Часть файлов больше 50 МБ, их Telegram не даёт отправить ботам: {n} шт.",
+        "story_gone": "⌛ История не найдена: она старше 24 часов, удалена или ссылка неверная. Актуальные можно скачать по ссылке на профиль: instagram.com/stories/<ник>/",
+        "story_login": "🔐 Истории Instagram временно недоступны. Попробуй позже, посты и Reels скачиваются как обычно.",
     },
     "uz": {
-        "start": ("👋 <b>Salom!</b>\n\n<b>YouTube</b> yoki <b>Instagram</b> (Reels, post, Shorts) havolasini yuboring — "
+        "start": ("👋 <b>Salom!</b>\n\n<b>YouTube</b> yoki <b>Instagram</b> (Reels, post, hikoyalar, Shorts) havolasini yuboring — "
                   "men uni <b>MP4</b> yoki <b>MP3</b> qilib yuboraman.\n\n"
                   "Telegram botlar uchun limit — 50 MB: uzun videolar sifati pasaytiriladi.\n"
                   "Men hech narsa saqlamayman: fayl faqat shu chatda qoladi — kerakli joyga yuboring."),
@@ -74,6 +76,8 @@ T = {
         "fallback_mp3": "📦 Video Telegram botlar limitiga (50 MB) sig'maydi, ovozni MP3 da yuboraman.",
         "photo_only_mp3": "🖼 Bu postda ovoz yo'q, faqat rasm. Rasmlarni yuboraman.",
         "skipped": "⚠️ Ba'zi fayllar 50 MB dan katta, Telegram botlarga ularni yuborishga ruxsat bermaydi: {n} ta.",
+        "story_gone": "⌛ Hikoya topilmadi: 24 soatdan eski, o'chirilgan yoki havola noto'g'ri. Joriy hikoyalarni profil havolasi orqali yuklash mumkin: instagram.com/stories/<nik>/",
+        "story_login": "🔐 Instagram hikoyalari vaqtincha mavjud emas. Keyinroq urinib ko'ring, post va Reels odatdagidek yuklanadi.",
         "credit": "@linkster_bot yordamida yuklab olindi",
     },
 }
@@ -316,11 +320,18 @@ def tools():
 
 
 def cookies_file():
-    if os.environ.get("COOKIES_B64"):
-        p = TMP / "cookies.txt"
-        p.write_bytes(base64.b64decode(os.environ["COOKIES_B64"]))
-        return str(p)
-    return None
+    """YouTube cookies (COOKIES_B64) and the Instagram session (IG_COOKIES_B64), merged into one
+    Netscape cookie file for yt-dlp and ig.py."""
+    parts = []
+    for k in ("COOKIES_B64", "IG_COOKIES_B64"):
+        if os.environ.get(k):
+            body = base64.b64decode(os.environ[k]).decode(errors="ignore")
+            parts += [l for l in body.splitlines() if l.strip() and not l.startswith("# Netscape")]
+    if not parts:
+        return None
+    p = TMP / "cookies.txt"
+    p.write_text("# Netscape HTTP Cookie File\n" + "\n".join(parts) + "\n")
+    return str(p)
 
 
 CLIENT_LADDER = [None, ["tv"], ["web_safari"], ["mweb"], ["android_vr"], ["ios"], ["web_embedded"]]
@@ -470,13 +481,21 @@ def run_job(chat_id, msg_id, url, fmt, lang, source="bot"):
     def ig_direct():
         """Instagram posts via ig.py: photos, carousels and videos. Returns True when handled."""
         import ig
-        try:
-            res = ig.fetch(url, cookies_file(), ydl_opts(work))
-        except ig.IGError as e:
-            ig_errs.append(e.detail)
-            return False
+        if ig.story_target(url):
+            try:
+                res = ig.fetch_story(url, cookies_file())
+            except ig.IGError as e:   # yt-dlp needs the same login, so no point falling back to it
+                raise JobError(e.key if e.key in ("story_login", "story_gone", "private", "blocked") else "fail",
+                               detail=f"story: {e.detail}")
+        else:
+            try:
+                res = ig.fetch(url, cookies_file(), ydl_opts(work))
+            except ig.IGError as e:
+                ig_errs.append(e.detail)
+                return False
         items = res["items"]
-        cap = f"{(res.get('caption') or '').strip()[:300]}\n\n{tx['credit']}".strip()
+        head = f"📖 @{res['owner']}" if res.get("story") and res.get("owner") else (res.get("caption") or "").strip()[:300]
+        cap = f"{head}\n\n{tx['credit']}".strip()
         vids = [i for i in items if i["type"] == "video"]
         if fmt == "mp3" and vids:
             status("download")

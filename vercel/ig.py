@@ -18,6 +18,11 @@ APP_ID = "936619743392459"
 DOC_ID = "8845758582119845"
 
 
+STORY_RE = re.compile(r"instagram\.com/stories/(?!highlights/)([A-Za-z0-9_.]+)(?:/(\d+))?")
+HIGHLIGHT_RE = re.compile(r"instagram\.com/stories/highlights/(\d+)")
+SHARE_RE = re.compile(r"instagram\.com/s/([A-Za-z0-9_=-]+)")
+
+
 class IGError(Exception):
     def __init__(self, key, detail=""):
         super().__init__(f"{key}: {detail}")
@@ -199,6 +204,77 @@ def fetch(url, cookie_path=None, ydl_params=None):
                 errs.append(f"{fn.__name__}: {repr(e)[:150]}")
     key = "login" if any("login" in e or "http 4" in e for e in errs) else "private"
     raise IGError(key, " | ".join(errs))
+
+
+def story_target(url):
+    """('user', name, story_id|None) | ('highlight', id, story_id|None) | None"""
+    m = HIGHLIGHT_RE.search(url or "")
+    if m:
+        return ("highlight", m.group(1), None)
+    m = SHARE_RE.search(url or "")
+    if m:   # share links: /s/<base64 "highlight:<id>">?story_media_id=<pk>_<uid>
+        import base64
+        try:
+            raw = base64.urlsafe_b64decode(m.group(1) + "=" * (-len(m.group(1)) % 4)).decode()
+        except Exception:
+            raw = ""
+        if raw.startswith("highlight:"):
+            sm = re.search(r"story_media_id=(\d+)", url)
+            return ("highlight", raw.split(":", 1)[1], sm and sm.group(1))
+        return None
+    m = STORY_RE.search(url or "")
+    if m:
+        return ("user", m.group(1), m.group(2))
+    return None
+
+
+def _api(s, path, params=None):
+    h = {"X-IG-App-ID": APP_ID, "X-ASBD-ID": "129477", "X-Requested-With": "XMLHttpRequest",
+         "Referer": "https://www.instagram.com/", "Accept": "*/*"}
+    if s.cookies.get("csrftoken"):
+        h["X-CSRFToken"] = s.cookies.get("csrftoken")
+    r = s.get(f"https://www.instagram.com/api/v1/{path}", params=params, headers=h, timeout=15)
+    if r.status_code in (401, 403) or "login_required" in r.text[:300]:
+        raise IGError("story_login", f"{path}: http {r.status_code} {r.text[:120]}")
+    if r.status_code == 404:
+        raise IGError("story_gone", f"{path}: 404")
+    if r.status_code != 200 or not r.text.lstrip().startswith("{"):
+        raise IGError("blocked", f"{path}: http {r.status_code}")
+    return r.json()
+
+
+def fetch_story(url, cookie_path=None):
+    """Stories and highlights of public accounts. Instagram serves them only to a logged-in session,
+    so this needs an instagram.com sessionid in the cookies."""
+    t = story_target(url)
+    if not t:
+        raise IGError("unsupported", "not a story link")
+    s = _session(cookie_path)
+    if not _logged_in(s):
+        raise IGError("story_login", "no instagram session in cookies")
+    kind, ref, sid = t
+    owner = ref if kind == "user" else ""
+    if kind == "user":
+        u = (_api(s, "users/web_profile_info/", {"username": ref}).get("data") or {}).get("user")
+        if not u:
+            raise IGError("story_gone", f"user {ref} not found")
+        if u.get("is_private") and not (u.get("followed_by_viewer")):
+            raise IGError("private", f"user {ref} is private")
+        reel_id = u["id"]
+    else:
+        reel_id = f"highlight:{ref}"
+    data = _api(s, "feed/reels_media/", {"reel_ids": reel_id})
+    reel = (data.get("reels") or {}).get(reel_id) or next(iter(data.get("reels_media") or []), None) or {}
+    media = reel.get("items") or []
+    owner = owner or ((reel.get("user") or {}).get("username") or "")
+    if sid:
+        media = [m for m in media if str(m.get("pk")) == sid or str(m.get("id", "")).split("_")[0] == sid]
+    if not media:
+        raise IGError("story_gone", f"{reel_id}: no items{' with id ' + sid if sid else ''}")
+    items = []
+    for m in media:
+        items += _items_from_product(m)["items"]
+    return {"items": items, "caption": "", "owner": owner, "story": True}
 
 
 def download(item, path, max_bytes):

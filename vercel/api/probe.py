@@ -31,7 +31,8 @@ class handler(BaseHTTPRequestHandler):
         if kind == "ig":
             try:
                 core.tools()
-                res = ig.fetch(url, core.cookies_file(), core.ydl_opts(Path(tempfile.mkdtemp(dir=core.TMP))))
+                res = (ig.fetch_story(url, core.cookies_file()) if ig.story_target(url) else
+                       ig.fetch(url, core.cookies_file(), core.ydl_opts(Path(tempfile.mkdtemp(dir=core.TMP)))))
                 out["ig"] = {"owner": res["owner"], "n": len(res["items"]),
                              "items": [{"type": i["type"], "w": i.get("w"), "h": i.get("h"), "url": i["url"][:90]} for i in res["items"]]}
             except ig.IGError as e:
